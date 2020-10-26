@@ -1,0 +1,538 @@
+#!/bin/bash
+#v091
+# 29/11/2014
+# Ver problema postfix
+# /var/spool/postfix
+
+
+#v09
+# 28/09/2013
+# Falta Limpiarla, va 70 % mas rapido que antes
+# Ideas de remastersys
+# Se vuelve a usar sin montar nada....
+
+#v07
+# 12/03/2013
+# Correccion al bug del desempaco
+# Primera version multikernel
+
+
+#v06
+# 14/02/2013
+# Soporte a cambio de imagen
+
+# v05
+# funcion despedida
+
+# v0.4 14/11/2012
+# Soporte a ficheros de exclusion
+
+
+# v 0.3 08/10/2012
+
+# Nueva version
+# Se genera un tar.gz, sin tener que montar nada
+# Esto permitira ser usado con multiples particiones
+
+
+# Esto tiene que estar aca....
+
+## Comienza variables ##
+
+
+ROJO="\e[1;31m"
+FIN="\e[0m"
+TAMA=3000
+USUARIO="root"
+ORIGEN="/usr/local/Live64"
+DESTINO="/DIR2"
+
+readme()
+{
+	cat $ORIGEN/Readme.txt
+	exit
+
+}
+
+
+chequeo_montaje()
+{
+
+	NUMPOINTS=$(mount | grep mnt | wc -l )
+	if [ $NUMPOINTS -ge 1 ]
+	then
+		echo -e $ROJO "Ud. tiene algo montado en /mnt"
+		echo -e $FIN
+		echo "Desmonte /mnt y vuelva a intentar"
+		exit
+	fi
+}
+
+
+
+usage()
+{
+cat << EOF
+Uso: $0 opciones
+
+Este script generarÃ¡ una ISO de DEBIAN 
+OPTIONS:
+   -h      Muestra esta ayuda 
+   -d      Dejar el instalador en /usr/local/Live64
+   -f      Cambiar fotos 
+   -n      NombreISO (Este es mandatorio!)
+   -r	   Abre el Readme
+   -u      Mantiene Usuarios
+EOF
+}
+
+FOTO=
+NOMBRE=
+PASSWD=
+VERBOSE=
+DEJAR=
+KEEP=
+while getopts hfdurn: OPTION
+ 
+do
+     case $OPTION in
+         h)
+             usage
+             exit 1
+             ;;
+         f)
+	     BANNER=1
+             ;;
+	 u)
+	     KEEP=1
+	     ;;
+
+	 r)
+	     readme
+	     ;;
+
+	 d)
+	     DEJAR="SI"
+	     ;;
+         n)
+             NOMBRE=$OPTARG
+             ;;
+         ?)
+             usage
+             exit
+             ;;
+     esac
+done
+if [[ -z $NOMBRE ]] 
+
+then
+     echo "El nombre de la ISO es mandatorio!"
+     usage
+     exit 
+fi
+
+
+
+# 
+echo "Chequeando DEPS/ Espacio"
+
+function imprime_logs
+{
+        echo -e $ROJO $1
+        echo -e $FIN
+        exit
+}
+
+
+function dir_Trabajo()
+{
+	if [ ! -d $ORIGEN ]
+        then
+                imprime_logs "Error: El directorio /usr/local/Live64 no existe!"
+                exit 0
+        fi
+
+
+
+	WORKDIR=/tmp/mkisobkp
+	mkdir -p $WORKDIR/dev
+	mkdir -p $WORKDIR/etc
+	mkdir -p $WORKDIR/proc
+	mkdir -p $WORKDIR/tmp
+	mkdir -p $WORKDIR/sys
+	mkdir -p $WORKDIR/mnt
+	mkdir -p $WORKDIR/media
+	mkdir -p $WORKDIR/run
+	mkdir -p $WORKDIR/var
+	mkdir -p $WORKDIR/home
+
+	chmod -R 1777 $WORKDIR/tmp
+	
+	cp -ax /etc/. $WORKDIR/etc
+	cp -ax /var/. $WORKDIR/var
+	cp -ax /home/. $WORKDIR/home
+
+	rm -fr $WORKDIR/etc/fstab
+	rm -fr $WORKDIR/etc/mtab
+	rm -fr $WORKDIR/etc/passwd-
+	rm -fr $WORKDIR/etc/shadow-
+	rm -fr $WORKDIR/etc/group-
+	rm -fr $WORKDIR/etc/gshadow-
+	rm -fr $WORKDIR/var/spool/postfix/*
+	
+        true > /etc/udev/rules.d/70-persistent-net.rules
+	cd $WORKDIR/var/log
+	rm -fr *[1-9].gz
+	rm  -fr *.0
+	rm -fr *.1
+	rm -fr *.2
+	rm -fr Xorg.0.log.old
+	for i in $(find . -type f )
+	do
+        	true >$i
+	done
+	rm -fr $WORKDIR/var/cache/apt/archives/*.deb
+
+
+################################# Borro Usuarios ##########################
+
+	if [ "$KEEP" != "1" ]
+	then
+		while IFS=: read usuario kk id kk2
+		do
+        	#echo $user $id
+        		if [ $id -ge 1000 ]
+        		then
+                		if [ $id -eq 65534 ]
+                		then
+                        		continue
+                		else
+                        		#userdel -r $usuario
+					echo $usuario
+                		fi
+        		fi
+		done < $WORKDIR/etc/passwd > /tmp/cuentas.txt
+	
+
+	grep -v -f /tmp/cuentas.txt $WORKDIR/etc/passwd > $WORKDIR/etc/passwd.new
+	grep -v -f /tmp/cuentas.txt $WORKDIR/etc/shadow > $WORKDIR/etc/shadow.new
+        mv  $WORKDIR/etc/passwd.new  $WORKDIR/etc/passwd
+        mv  $WORKDIR/etc/shadow.new  $WORKDIR/etc/shadow
+	for i in $(cat /tmp/cuentas.txt)
+	do
+		rm -fr $WORKDIR/home/$i
+	done
+	#rm -fr /tmp/cuentas.txt
+	fi
+	
+
+
+############################################################################
+
+
+###################################### Blanqueo Root ######################################################
+	while IFS=: read user pass campo3 campo4 campo5 campo6 campo7 campo8 campo9
+	do
+        	if [ "$user" = "root" ]
+        	then
+                	pass="*"
+                	echo "$user:$pass:$campo3:$campo4:$campo5:$campo6:$campo7:$campo8:$campo9"
+        	else
+                	echo "$user:$pass:$campo3:$campo4:$campo5:$campo6:$campo7:$campo8:$campo9"
+        	fi
+	done < $WORKDIR/etc/shadow > $WORKDIR/tmp/shadow
+	mv $WORKDIR/tmp/shadow $WORKDIR/etc/shadow
+
+################################################################################################
+	
+	REALFOLDERS=""
+
+	for d in `ls -d $WORKDIR/*`; do
+	REALFOLDERS="$REALFOLDERS $d"
+	done
+
+
+	for d in `ls / | grep -v etc | grep -v run | grep -v tmp | grep -v sys | grep -v var \
+	| grep -v dev | grep -v media | grep -v mnt | grep -v lost+found | grep -v proc \
+	| grep -v home`; do
+	REALFOLDERS="$REALFOLDERS /$d"
+	done
+
+	#Ver como arreglar esto
+
+
+	#if [ -z $DEJAR ]
+        #then
+        #        echo "Borrando /usr/local/Live64"
+
+
+         #       rm -fr $DESTINO/usr/local/Live64
+         #       rm -fr $DESTINO/usr/sbin/mkisobkp
+         #       rm -fr $DESTINO/usr/sbin/cleanup
+        #fi
+
+
+	if [ -z $DEJAR ]
+	then	
+
+
+		mksquashfs $REALFOLDERS /filesystem.squashfs -no-duplicates -comp xz -e \
+        	/root/.bash_history /usr/sbin/mkisobkp /usr/local/Live64
+ 
+	else
+		 mksquashfs $REALFOLDERS /filesystem.squashfs -no-duplicates -comp xz -e \
+                /root/.bash_history 
+	fi
+
+	mv /filesystem.squashfs $ORIGEN/live
+	cd $ORIGEN
+        $ORIGEN/genera.sh $NOMBRE
+        echo -e $ROJO "Se termino"
+        echo -e $FIN
+	rm -fr $WORKDIR
+
+}
+
+
+function cambia_banner()
+{
+
+	if [ ! -d $ORIGEN/desempaco ]
+	then
+		mkdir $ORIGEN/desempaco
+	fi               
+
+	echo "Cambiando imagen"
+	cd $ORIGEN/desempaco
+	gzip -d < $ORIGEN/install/gtk/initrd.gz | cpio -i --make-directories --no-absolute-filenames
+	cp $ORIGEN/pixart/logo_pixart.png usr/share/graphics/logo_debian.png
+	find -print0 | cpio -H newc -o0 | gzip -9 > $ORIGEN/install/gtk/initrd.gz
+	rm -fr $ORIGEN/desempaco/*
+	cp $ORIGEN/pixart/grub_pixart.png $ORIGEN/isolinux/splash.png
+	echo "Imagen Cambiada"
+}
+
+
+function chequeo_deps()
+{
+
+        if [ ! -f /usr/bin/mksquashfs ]
+        then
+                echo -e $ROJO "No existe el paquete squashfs-tools"
+                echo -e $FIN
+                exit
+        fi
+
+        if [ ! -d /usr/local/Live64/.disk ]
+        then
+                echo -e $ROJO "No existe el directorio .disk"
+                echo -e $FIN
+                exit
+        fi
+
+
+        if [ ! -f /usr/bin/genisoimage ]
+        then
+                echo -e $ROJO "No existe el paquete genisoimage"
+                echo -e $FIN
+                exit
+        fi
+
+
+
+	if [ -f /imagen.tgz ]
+	then
+		echo -e $ROJO "Existe un fichero llamado /imagen.tgz"
+		exit
+	fi
+
+	if [ -f /tmp/*.iso ]
+	then
+		echo -e $ROJO "Existe una ISO en /tmp, por favor fijese, o muevala"
+		echo -e $FIN
+		exit
+	fi
+
+}
+
+
+function chequeo_kernels
+{
+
+KERNEL=$(uname -r)
+if [ $KERNEL != "3.2.0-4-amd64" ]
+then
+	SALIDA=$(dpkg -l | grep 3.2.0-4-amd64 | wc -l)
+	if [ $SALIDA -eq 0 ]
+	then
+		echo -e $ROJO "Usted esta usando un kernel mas nuevo"
+		echo -e $ROJO "Debera realizar apt-get install linux-image-amd64"
+		echo -e $FIN
+		exit 
+	fi
+fi
+
+
+}
+
+
+
+function chequeo_root()
+{
+
+        isRoot=$(echo $UID)
+        if [ $isRoot != 0 ]
+        then
+                echo -e $ROJO "debe ser root para correr el script"
+                echo -e $FIN
+                exit
+        fi
+}
+
+function chequeo_espacio()
+{
+
+        DISPONIBLE=$(df -m /tmp | grep -vi "mounted" | awk '{print $4}')
+        if [ "$DISPONIBLE" -le $TAMA ]
+        then
+                echo -e $ROJO  "No dispone de espacio en la particion Raiz"
+                echo -e $FIN
+                exit
+        fi
+
+}
+
+function lista_vm()
+{
+
+        su $USUARIO -c " VBoxManage list runningvms " | awk '{print $1}'  | sed -s 's/"//g' > /tmp/running-vm.txt
+
+        CUANTA=$(wc -l /tmp/running-vm.txt | awk '{print $1}' )
+        if [ "$CUANTA" -gt 0 ]
+        then
+                echo -e $ROJO "Por favor, baje las siguientes VM's"
+                cat /tmp/running-vm.txt
+                rm -fr /tmp/running-vm.txt
+                echo -e $FIN
+                exit
+        fi
+}
+
+function principal
+{
+
+        if [ ! -d $ORIGEN ]
+        then
+                imprime_logs "Error: El directorio /usr/local/Live64 no existe!"
+                exit 0
+        fi
+
+        if [ -d $DESTINO ]
+        then
+                imprime_logs "Error: El directorio /DIR2 existe!"
+        else
+                mkdir $DESTINO
+        fi
+
+        TARGET=$(df /tmp | grep -v Mounted | awk '{print $1}')
+
+	if [ "$BANNER" == 1 ]
+	then
+		cambia_banner
+	fi
+
+        #Montar
+        cd /
+
+        echo "Generando /imagen.tgz, Aguarde"
+
+        #if [ -f $ORIGEN/exclusion.txt ]
+        #then
+                #Si esta el fichero /usr/local/Live32/exclusion.txt
+         #       tar cpzf imagen.tgz --exclude=/proc --exclude=/tmp --exclude=/lost+found --exclude=/imagen.tgz --exclude=/mnt --exclude=/sys --exclude-from=$ORIGEN/exclusion.txt / 2>/dev/null
+        #else
+        #        tar cpzf imagen.tgz --exclude=/proc --exclude=/tmp --exclude=/lost+found --exclude=/imagen.tgz --exclude=/mnt --exclude=/sys  / 2>/dev/null
+        #fi
+
+
+
+
+        #mkdir $DESTINO/proc
+        #mkdir $DESTINO/sys
+        #mkdir $DESTINO/mnt
+        #mkdir $DESTINO/tmp
+        # Generamos tmp, y le pasamos sticky bit
+        #chmod -R 1777 $DESTINO/tmp
+
+############ Cambio ###################
+
+	grep ext /etc/mtab | grep ext | awk '{print "mount " $1 " /mnt" $2 }' > /tmp/exec
+	chmod +x /tmp/exec
+	/tmp/exec
+
+	cd /mnt
+
+	# Si no esta el flag activado de dejar (-d), no lo dejo al /usr/local/Live64
+	if [ -z $DEJAR ]
+	then
+		echo "Excluyendo mkisobkp"
+		tar cpzf /imagen.tgz --exclude=/imagen.tgz --exclude=/mnt/usr/local/Live64 *
+	else
+		echo "Dejando mkisobkp"
+		tar cpzf /imagen.tgz --exclude=/imagen.tgz *
+	fi
+	echo "Descomprimiendo imagen"
+	tar xpzf /imagen.tgz -C $DESTINO 
+
+	rm -fr /imagen.tgz
+
+
+        chroot $DESTINO /usr/sbin/cleanup
+
+
+	if [ -z $DEJAR ]
+	then
+		echo "Borrando /usr/local/Live64"
+	
+
+		rm -fr $DESTINO/usr/local/Live64
+        	rm -fr $DESTINO/usr/sbin/mkisobkp	
+        	rm -fr $DESTINO/usr/sbin/cleanup	
+	fi
+
+        ## Comienzo el squashfs
+
+        if [ -f $ORIGEN/live/filesystem.squashfs ]
+        then
+                rm -fr $ORIGEN/live/filesystem.squashfs
+        fi
+
+        mksquashfs $DESTINO $ORIGEN/live/filesystem.squashfs
+
+        cd $ORIGEN
+        $ORIGEN/genera.sh $NOMBRE 
+	rm -fr /mnt/DIR2/DIR2
+        #rm -fr $DESTINO
+        echo -e $ROJO "Se termino"
+        echo -e $FIN
+
+	
+
+
+
+}
+
+function despedida
+{
+	rm -fr /usr/local/Live64/live/filesystem.squashfs
+}
+
+chequeo_montaje
+chequeo_deps
+#chequeo_kernels
+chequeo_root
+#chequeo_espacio  # Con LVM; hay que ver que pasa...
+#lista_vm
+dir_Trabajo
+despedida
+
